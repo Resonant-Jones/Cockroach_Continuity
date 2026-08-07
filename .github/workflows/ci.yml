@@ -58,6 +58,10 @@ jobs:
               raise SystemExit(f"missing canonical tables: {sorted(missing)}")
           print(f"canonical tables present: {len(expected)}")
           PY
+      - name: Prove idempotent event ledger
+        env:
+          CC_DATABASE_URL: postgresql+psycopg://root@localhost:26257/defaultdb?sslmode=disable
+        run: python scripts/prove_ledger.py
       - name: Downgrade and re-upgrade
         env:
           CC_DATABASE_URL: postgresql+psycopg://root@localhost:26257/defaultdb?sslmode=disable
