@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from cockroach_continuity.approvals import decide_candidate
 from cockroach_continuity.candidates import CandidateProposal, persist_candidate_proposals
 from cockroach_continuity.config import get_settings
+from cockroach_continuity.embeddings import EMBEDDING_DIMENSION
 from cockroach_continuity.ledger import append_project_event, create_project
 from cockroach_continuity.models import (
     EvidenceLink,
@@ -15,6 +16,52 @@ from cockroach_continuity.models import (
     OperationReceipt,
     ProjectEvent,
 )
+from cockroach_continuity.retrieval import (
+    retrieve_approved_assertions,
+    store_assertion_embedding,
+    store_event_embedding,
+)
+
+
+def unit_vector(axis: int) -> list[float]:
+    vector = [0.0] * EMBEDDING_DIMENSION
+    vector[axis] = 1.0
+    return vector
+
+
+def create_approved_decision(
+    session: Session,
+    *,
+    project_name: str,
+    event_content: str,
+    statement: str,
+    event_key: str,
+    decision_key: str,
+) -> tuple[object, ProjectEvent, object]:
+    project = create_project(session, name=project_name)
+    event_result = append_project_event(
+        session,
+        project_id=project.id,
+        content=event_content,
+        idempotency_key=event_key,
+    )
+    event = session.get(ProjectEvent, event_result.event_id)
+    assert event is not None
+    candidate = persist_candidate_proposals(
+        session,
+        event=event,
+        attempt_id=event_result.attempt_id,
+        proposals=(CandidateProposal(kind="decision", statement=statement, confidence=0.99),),
+    )[0]
+    approval = decide_candidate(
+        session,
+        candidate_id=candidate.id,
+        decision="approve",
+        actor_ref="ci-user",
+        idempotency_key=decision_key,
+    )
+    assert approval.assertion_id is not None
+    return project, event, approval
 
 
 def main() -> None:
@@ -149,14 +196,49 @@ def main() -> None:
         assert assertion_evidence_count == 1
         assert receipt_count == 3
 
+        # Prove the semantic access path and project boundary with identical vectors.
+        canonical_vector = unit_vector(0)
+        store_event_embedding(session, event_id=first.event_id, embedding=canonical_vector)
+        store_assertion_embedding(
+            session, assertion_id=approved.assertion_id, embedding=canonical_vector
+        )
+
+        other_project, other_event, other_approval = create_approved_decision(
+            session,
+            project_name="Isolation Control Project",
+            event_content="A different project happens to contain semantically identical language.",
+            statement="CockroachDB is the canonical continuity store.",
+            event_key="ci-other-event",
+            decision_key="ci-other-approve",
+        )
+        assert other_approval.assertion_id is not None
+        store_event_embedding(session, event_id=other_event.id, embedding=canonical_vector)
+        store_assertion_embedding(
+            session,
+            assertion_id=other_approval.assertion_id,
+            embedding=canonical_vector,
+        )
+
+        retrieval = retrieve_approved_assertions(
+            session,
+            project_id=project.id,
+            query_text="Where does canonical continuity live?",
+            query_embedding=canonical_vector,
+            limit=8,
+        )
+        assert [item.assertion_id for item in retrieval.assertions] == [approved.assertion_id]
+        assert all(item.assertion_id != other_approval.assertion_id for item in retrieval.assertions)
+        assert other_project.id != project.id
+
         print(
-            "continuity governance proof passed:",
+            "continuity vertical-slice proof passed:",
             {
                 "project_id": str(project.id),
                 "event_id": str(first.event_id),
                 "attempt_id": str(first.attempt_id),
                 "approved_assertion_id": str(approved.assertion_id),
                 "rejected_candidate_id": str(rejected.candidate_id),
+                "retrieval_trace_id": str(retrieval.trace_id),
             },
         )
 
