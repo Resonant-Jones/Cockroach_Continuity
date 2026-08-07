@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://root@localhost:26257/defaultdb?sslmode=disable"
     database_required: bool = False
     app_name: str = "Cockroach Continuity"
+    aws_region: str = "us-east-1"
+    candidate_model_id: str = "amazon.nova-lite-v1:0"
+    embedding_model_id: str = "amazon.titan-embed-text-v2:0"
 
 
 @lru_cache
