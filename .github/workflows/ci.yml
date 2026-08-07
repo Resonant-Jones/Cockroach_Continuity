@@ -24,3 +24,46 @@ jobs:
         run: make test
       - name: Build container
         run: docker build -t cockroach-continuity:ci .
+      - name: Start CockroachDB
+        run: docker compose up -d --wait cockroach
+      - name: Upgrade canonical ledger
+        env:
+          CC_DATABASE_URL: postgresql+psycopg://root@localhost:26257/defaultdb?sslmode=disable
+        run: alembic upgrade head
+      - name: Inspect canonical tables
+        env:
+          CC_DATABASE_URL: postgresql+psycopg://root@localhost:26257/defaultdb?sslmode=disable
+        run: |
+          python - <<'PY'
+          from sqlalchemy import create_engine, inspect
+          from cockroach_continuity.config import get_settings
+
+          expected = {
+              "projects",
+              "sessions",
+              "project_events",
+              "execution_attempts",
+              "memory_candidates",
+              "memory_assertions",
+              "approval_decisions",
+              "evidence_links",
+              "retrieval_traces",
+              "continuity_snapshots",
+              "operation_receipts",
+          }
+          engine = create_engine(get_settings().database_url)
+          present = set(inspect(engine).get_table_names())
+          missing = expected - present
+          if missing:
+              raise SystemExit(f"missing canonical tables: {sorted(missing)}")
+          print(f"canonical tables present: {len(expected)}")
+          PY
+      - name: Downgrade and re-upgrade
+        env:
+          CC_DATABASE_URL: postgresql+psycopg://root@localhost:26257/defaultdb?sslmode=disable
+        run: |
+          alembic downgrade base
+          alembic upgrade head
+      - name: Cockroach diagnostics on failure
+        if: failure()
+        run: docker compose logs cockroach
