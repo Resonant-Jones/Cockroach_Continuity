@@ -45,15 +45,16 @@ def store_assertion_embedding(
 def store_event_embedding(
     session: Session, *, event_id: uuid.UUID, embedding: Sequence[float]
 ) -> None:
-    result = session.execute(
+    updated_id = session.execute(
         text(
             "UPDATE project_events "
             "SET embedding = CAST(:embedding AS VECTOR(1024)) "
-            "WHERE id = :event_id"
+            "WHERE id = :event_id "
+            "RETURNING id"
         ),
         {"embedding": vector_literal(embedding), "event_id": event_id},
-    )
-    if result.rowcount != 1:
+    ).scalar_one_or_none()
+    if updated_id is None:
         session.rollback()
         raise LookupError("project event not found")
     session.commit()
