@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-from cockroach_continuity.approvals import decide_candidate
+from cockroach_continuity.approvals import CandidateDecisionResult, decide_candidate
 from cockroach_continuity.candidates import CandidateProposal, persist_candidate_proposals
 from cockroach_continuity.config import get_settings
 from cockroach_continuity.embeddings import EMBEDDING_DIMENSION
@@ -14,6 +14,7 @@ from cockroach_continuity.models import (
     MemoryAssertion,
     MemoryCandidate,
     OperationReceipt,
+    Project,
     ProjectEvent,
 )
 from cockroach_continuity.retrieval import (
@@ -37,7 +38,7 @@ def create_approved_decision(
     statement: str,
     event_key: str,
     decision_key: str,
-) -> tuple[object, ProjectEvent, object]:
+) -> tuple[Project, ProjectEvent, CandidateDecisionResult]:
     project = create_project(session, name=project_name)
     event_result = append_project_event(
         session,
@@ -196,7 +197,6 @@ def main() -> None:
         assert assertion_evidence_count == 1
         assert receipt_count == 3
 
-        # Prove the semantic access path and project boundary with identical vectors.
         canonical_vector = unit_vector(0)
         store_event_embedding(session, event_id=first.event_id, embedding=canonical_vector)
         store_assertion_embedding(
