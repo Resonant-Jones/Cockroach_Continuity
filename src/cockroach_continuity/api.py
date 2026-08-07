@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -10,6 +11,7 @@ from cockroach_continuity.db import get_session
 from cockroach_continuity.ledger import append_project_event, create_project
 
 router = APIRouter(prefix="/api")
+SessionDep = Annotated[Session, Depends(get_session)]
 
 
 class ProjectCreateRequest(BaseModel):
@@ -37,9 +39,7 @@ class EventAppendResponse(BaseModel):
 
 
 @router.post("/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
-def post_project(
-    request: ProjectCreateRequest, session: Session = Depends(get_session)
-) -> ProjectResponse:
+def post_project(request: ProjectCreateRequest, session: SessionDep) -> ProjectResponse:
     try:
         project = create_project(session, name=request.name)
     except ValueError as exc:
@@ -51,7 +51,7 @@ def post_project(
 def post_project_event(
     project_id: uuid.UUID,
     request: EventAppendRequest,
-    session: Session = Depends(get_session),
+    session: SessionDep,
 ) -> EventAppendResponse:
     try:
         result = append_project_event(
