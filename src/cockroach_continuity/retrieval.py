@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
