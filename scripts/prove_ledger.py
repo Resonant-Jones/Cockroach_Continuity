@@ -5,10 +5,12 @@ from sqlalchemy.orm import Session
 
 from cockroach_continuity.approvals import CandidateDecisionResult, decide_candidate
 from cockroach_continuity.candidates import CandidateProposal, persist_candidate_proposals
+from cockroach_continuity.compiler import compile_continuity_snapshot
 from cockroach_continuity.config import get_settings
 from cockroach_continuity.embeddings import EMBEDDING_DIMENSION
 from cockroach_continuity.ledger import append_project_event, create_project
 from cockroach_continuity.models import (
+    ContinuitySnapshot,
     EvidenceLink,
     ExecutionAttempt,
     MemoryAssertion,
@@ -230,6 +232,30 @@ def main() -> None:
         assert all(item.assertion_id != other_approval.assertion_id for item in retrieval.assertions)
         assert other_project.id != project.id
 
+        compiled = compile_continuity_snapshot(
+            session,
+            project_id=project.id,
+            retrieval=retrieval,
+        )
+        assert compiled.brief["decisions"][0]["assertion_id"] == str(approved.assertion_id)
+        assert compiled.brief["decisions"][0]["evidence"][0]["source_id"] == str(first.event_id)
+        assert compiled.brief["rejected_paths"] == []
+
+        first_snapshot = session.get(ContinuitySnapshot, compiled.snapshot_id)
+        assert first_snapshot is not None and first_snapshot.status == "active"
+
+        recompiled = compile_continuity_snapshot(
+            session,
+            project_id=project.id,
+            retrieval=retrieval,
+        )
+        assert recompiled.input_hash == compiled.input_hash
+        assert recompiled.brief == compiled.brief
+        session.refresh(first_snapshot)
+        assert first_snapshot.status == "stale"
+        active_snapshot = session.get(ContinuitySnapshot, recompiled.snapshot_id)
+        assert active_snapshot is not None and active_snapshot.status == "active"
+
         print(
             "continuity vertical-slice proof passed:",
             {
@@ -239,6 +265,8 @@ def main() -> None:
                 "approved_assertion_id": str(approved.assertion_id),
                 "rejected_candidate_id": str(rejected.candidate_id),
                 "retrieval_trace_id": str(retrieval.trace_id),
+                "snapshot_id": str(recompiled.snapshot_id),
+                "input_hash": recompiled.input_hash,
             },
         )
 
