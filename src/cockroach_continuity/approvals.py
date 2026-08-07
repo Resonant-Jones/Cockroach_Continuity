@@ -106,9 +106,10 @@ def decide_candidate(
     if candidate is None:
         raise LookupError("candidate not found")
 
+    project_id = candidate.project_id
     intent_hash = _intent_hash(decision=normalized_decision, revised_statement=revised)
     existing = _existing_receipt(
-        session, project_id=candidate.project_id, idempotency_key=normalized_key
+        session, project_id=project_id, idempotency_key=normalized_key
     )
     if existing is not None:
         return _result_from_receipt(
@@ -118,17 +119,30 @@ def decide_candidate(
     if candidate.status != "pending":
         raise ValueError(f"candidate is not pending: {candidate.status}")
 
+    source_links: list[EvidenceLink] = []
+    if normalized_decision in {"approve", "revise"}:
+        source_links = list(
+            session.scalars(
+                select(EvidenceLink).where(
+                    EvidenceLink.target_type == "memory_candidate",
+                    EvidenceLink.target_id == candidate.id,
+                )
+            ).all()
+        )
+        if not source_links:
+            raise ValueError("candidate has no evidence links and cannot be promoted")
+
     assertion: MemoryAssertion | None = None
     if normalized_decision in {"approve", "revise"}:
         logical_key = f"candidate:{candidate.id}"
         statement = revised if normalized_decision == "revise" else candidate.statement
         assert statement is not None
         assertion = MemoryAssertion(
-            project_id=candidate.project_id,
+            project_id=project_id,
             candidate_id=candidate.id,
             logical_key=logical_key,
             version=_next_assertion_version(
-                session, project_id=candidate.project_id, logical_key=logical_key
+                session, project_id=project_id, logical_key=logical_key
             ),
             kind=candidate.kind,
             statement=statement,
@@ -138,18 +152,10 @@ def decide_candidate(
         session.add(assertion)
         session.flush()
 
-        source_links = session.scalars(
-            select(EvidenceLink).where(
-                EvidenceLink.target_type == "memory_candidate",
-                EvidenceLink.target_id == candidate.id,
-            )
-        ).all()
-        if not source_links:
-            raise ValueError("candidate has no evidence links and cannot be promoted")
         for link in source_links:
             session.add(
                 EvidenceLink(
-                    project_id=candidate.project_id,
+                    project_id=project_id,
                     target_type="memory_assertion",
                     target_id=assertion.id,
                     source_type=link.source_type,
@@ -160,7 +166,7 @@ def decide_candidate(
             )
 
     decision_row = ApprovalDecision(
-        project_id=candidate.project_id,
+        project_id=project_id,
         candidate_id=candidate.id,
         assertion_id=assertion.id if assertion else None,
         actor_ref=normalized_actor,
@@ -178,7 +184,7 @@ def decide_candidate(
     }[normalized_decision]
 
     receipt = OperationReceipt(
-        project_id=candidate.project_id,
+        project_id=project_id,
         operation_kind="candidate_decision",
         idempotency_key=normalized_key,
         status="completed",
@@ -198,7 +204,7 @@ def decide_candidate(
     except IntegrityError:
         session.rollback()
         winner = _existing_receipt(
-            session, project_id=candidate.project_id, idempotency_key=normalized_key
+            session, project_id=project_id, idempotency_key=normalized_key
         )
         if winner is None:
             raise
