@@ -4,7 +4,7 @@
 > Verification: required at every item; pause only on external credentials, destructive migration, ADR contradiction, or persistent verification failure.
 > Goal: prove one narrow continuity loop end to end before adding anything else.
 
-- [x] **1. Install executable repository spine**
+- [ ] **1. Install executable repository spine**
   Spec ref: `docs/architecture/07-deployment-topology.md` and `01-system-overview.md`
   What to build: Python package, FastAPI process, explicit database seam, local CockroachDB profile, stable Make targets, tests, container, and CI.
   Acceptance: process liveness is independent of database readiness; repository has one stable path for local and CI execution.
