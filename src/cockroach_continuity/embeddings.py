@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Protocol, Sequence
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 EMBEDDING_DIMENSION = 1024
 DEFAULT_EMBEDDING_MODEL_ID = "amazon.titan-embed-text-v2:0"
