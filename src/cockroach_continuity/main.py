@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Response, status
 
+from cockroach_continuity.api import router as api_router
 from cockroach_continuity.config import get_settings
 from cockroach_continuity.db import database_ready
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0")
+app.include_router(api_router)
 
 
 @app.get("/health/live")
