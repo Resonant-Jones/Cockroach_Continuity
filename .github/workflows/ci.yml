@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "agent/**"]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e '.[dev]'
+      - name: Lint
+        run: make lint
+      - name: Typecheck
+        run: make typecheck
+      - name: Test
+        run: make test
+      - name: Build container
+        run: docker build -t cockroach-continuity:ci .
+      - name: Start CockroachDB
+        run: docker compose up -d --wait cockroach
+      - name: Upgrade canonical ledger
+        env:
+          CC_DATABASE_URL: postgresql+psycopg://root@localhost:26257/defaultdb?sslmode=disable
+        run: |
+          set -o pipefail
+          alembic upgrade head 2>&1 | tee migration.log
+      - name: Upload migration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-diagnostics
+          path: migration.log
+          if-no-files-found: ignore
+      - name: Inspect canonical tables
+        env:
+          CC_DATABASE_URL: postgresql+psycopg://root@localhost:26257/defaultdb?sslmode=disable
+        run: |
+          python - <<'PY'
+          from sqlalchemy import create_engine, inspect
+          from cockroach_continuity.config import get_settings
+
+          expected = {
+              "projects",
+              "sessions",
+              "project_events",
+              "execution_attempts",
+              "memory_candidates",
+              "memory_assertions",
+              "approval_decisions",
+              "evidence_links",
+              "retrieval_traces",
+              "continuity_snapshots",
+              "operation_receipts",
+          }
+          engine = create_engine(get_settings().database_url)
+          present = set(inspect(engine).get_table_names())
+          missing = expected - present
+          if missing:
+              raise SystemExit(f"missing canonical tables: {sorted(missing)}")
+          print(f"canonical tables present: {len(expected)}")
+          PY
+      - name: Prove idempotent event ledger
+        env:
+          CC_DATABASE_URL: postgresql+psycopg://root@localhost:26257/defaultdb?sslmode=disable
+        run: python scripts/prove_ledger.py
+      - name: Downgrade and re-upgrade
+        env:
+          CC_DATABASE_URL: postgresql+psycopg://root@localhost:26257/defaultdb?sslmode=disable
+        run: |
+          alembic downgrade base
+          alembic upgrade head
+      - name: Cockroach diagnostics on failure
+        if: failure()
+        run: docker compose logs cockroach
